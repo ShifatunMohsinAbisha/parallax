@@ -4,31 +4,81 @@
 
 Parallax takes a single 2D photograph as input and reconstructs a full 3D representation of the object(s) in the scene. The project combines deep learning–based depth estimation, shape prediction, and mesh generation techniques to infer 3D geometry from monocular images — bridging the gap between flat photographs and volumetric understanding.
 
-## Pipeline Diagram
-
-<!-- TODO: Add pipeline diagram here -->
-<!-- Suggested sections: Input Image → Feature Extraction → Depth/Normal Estimation → 3D Representation → Mesh Output -->
+## Pipeline Architecture
 
 ```
-[ placeholder — pipeline diagram coming soon ]
+                       ┌─────────────────────────┐
+                       │  Input Image (2D RGB)   │
+                       └────────────┬────────────┘
+                                    │
+                                    ▼
+                       ┌─────────────────────────┐
+                       │   1. Preprocessing      │ (src/preprocessing.py)
+                       │   - Aspect-ratio resize │
+                       │   - ImageNet normalize  │
+                       └────────────┬────────────┘
+                                    │
+                     ┌──────────────┴──────────────┐
+                     ▼                             ▼
+       ┌───────────────────────────┐ ┌───────────────────────────┐
+       │   2. Object Segmentation  │ │   3. Depth Estimation     │
+       │   (src/segmentation.py)   │ │   (src/depth_estimation.py) │
+       │   - LRASPP MobileNetV3 /  │ │   - MiDaS v2.1 Small /      │
+       │     Saliency+GrabCut      │ │     Geometric Shading       │
+       │   - Binary / Soft Mask    │ │   - Dense Depth Map         │
+       └─────────────┬─────────────┘ └─────────────┬─────────────┘
+                     └──────────────┬──────────────┘
+                                    │ (Masked Depth + RGB + Intrinsics K)
+                                    ▼
+                       ┌─────────────────────────┐
+                       │   4. Geometry Engine    │ (src/geometry.py)
+                       │   - Pinhole unproject   │
+                       │   - Surface normals     │
+                       └────────────┬────────────┘
+                                    │
+                                    ▼
+                       ┌─────────────────────────┐
+                       │   5. Point Cloud Post   │ (src/point_cloud.py)
+                       │   - Statistical filter  │ (Open3D / NumPy SOR)
+                       │   - Color mapping       │
+                       └────────────┬────────────┘
+                                    │
+                                    ▼
+       ┌─────────────────────────────────────────────────────────┐
+       │                 Reconstructed 3D Output                 │
+       │   • 3D Point Cloud (.ply, .pcd, .obj)                   │
+       │   • 3D Isometric Projection Screenshot (.png)           │
+       │   • 4-Panel End-to-End Diagnostic Overview              │
+       └─────────────────────────────────────────────────────────┘
 ```
 
 ## Project Structure
 
 ```
 Parallax/
-├── src/                # Source code (models, data loaders, training, inference)
-│   ├── __init__.py
-│   ├── data/           # Dataset loading and preprocessing
-│   ├── models/         # Model architectures
-│   ├── training/       # Training loops and utilities
-│   └── inference/      # Inference and reconstruction scripts
-├── notebooks/          # Jupyter notebooks for exploration and visualization
-├── data/               # Datasets (excluded from version control)
-├── models/             # Saved model weights and checkpoints (excluded from VC)
-├── tests/              # Unit and integration tests
-├── outputs/            # Reconstruction outputs, renders, logs (excluded from VC)
-├── requirements.txt    # Python dependencies
+├── src/
+│   ├── preprocessing.py    # Aspect-preserving resizing, normalization, image I/O
+│   ├── segmentation.py     # LRASPP MobileNetV3 & Saliency GrabCut object isolation
+│   ├── depth_estimation.py # MiDaS Small & Geometric monocular depth estimation
+│   ├── geometry.py         # Pinhole camera back-projection & surface normal computation
+│   ├── point_cloud.py      # Open3D & NumPy statistical outlier filtering, PCD/PLY export
+│   ├── pipeline.py         # Unified end-to-end reconstruction CLI & orchestrator
+│   ├── data/               # Dataset loaders & custom datasets
+│   ├── models/             # Neural network model definitions
+│   ├── training/           # Model training and fine-tuning loops
+│   └── inference/          # Batch inference and reconstruction scripts
+├── tests/
+│   ├── test_preprocessing.py
+│   ├── test_segmentation.py
+│   ├── test_depth_estimation.py
+│   ├── test_geometry.py
+│   ├── test_point_cloud.py
+│   └── test_pipeline.py
+├── notebooks/              # Jupyter exploration & visualization notebooks
+├── data/                   # Input datasets (git-ignored)
+├── models/                 # Model weights and checkpoints (git-ignored)
+├── outputs/                # Reconstructions, 3D meshes, and renders (git-ignored)
+├── requirements.txt        # Python dependencies
 └── README.md
 ```
 
@@ -45,6 +95,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Run the complete end-to-end 3D reconstruction pipeline on an image
+python -m src.pipeline path/to/image.png --output-dir outputs --fov 60.0
 ```
 
 ## Models Used
