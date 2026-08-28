@@ -88,6 +88,7 @@ from src.refinement import (
     refine_mesh,
 )
 from src.segmentation import SegmentationResult, create_side_by_side_panel, overlay_mask, segment_object
+from src.visualize import generate_html_viewer
 
 # ──────────────────────────────────────────────
 # Data Structures
@@ -202,6 +203,7 @@ def run_pipeline(
     refine: bool = True,
     smoothing_method: str = "taubin",
     smoothing_iterations: int = 5,
+    generate_viewer: bool = False,
     nb_neighbors: int = 20,
     std_ratio: float = 2.0,
     save_intermediate_artifacts: bool = True,
@@ -217,6 +219,7 @@ def run_pipeline(
       5. Point Cloud Post-Processing (Statistical noise filtering + PLY/PCD export)
       6. 3D Surface Mesh Reconstruction (Mesh generation, cleanup & OBJ/PLY/GLB export)
       7. Mesh & Surface Refinement (Taubin/Laplacian smoothing & hole repair)
+      8. Interactive 3D Web Viewer (Standalone HTML5/Three.js viewer)
 
     Parameters
     ----------
@@ -246,6 +249,8 @@ def run_pipeline(
         Smoothing algorithm (``"taubin"``, ``"laplacian"``, or ``"none"``).
     smoothing_iterations : int
         Number of smoothing passes.
+    generate_viewer : bool
+        Whether to generate a standalone interactive HTML5 Three.js 3D web viewer.
     nb_neighbors : int
         Neighbor count for statistical outlier removal.
     std_ratio : float
@@ -416,6 +421,20 @@ def run_pipeline(
         save_image(overview_panel, overview_path)
         saved_files["pipeline_overview"] = overview_path
 
+    # ──────────────────────────────────────────────
+    # Stage 8: Interactive 3D Web Viewer Generation
+    # ──────────────────────────────────────────────
+    if generate_viewer:
+        glb_file = saved_files.get("refined_glb") or saved_files.get("mesh_glb")
+        if glb_file and glb_file.exists():
+            viewer_path = out_dir / f"{stem}_viewer.html"
+            generate_html_viewer(glb_file, viewer_path, title=f"Parallax 3D — {stem}")
+            # Also create standard outputs/viewer.html for convenience
+            standard_viewer = out_dir / "viewer.html"
+            generate_html_viewer(glb_file, standard_viewer, title=f"Parallax 3D — {stem}")
+            saved_files["html_viewer"] = standard_viewer
+            saved_files["stem_viewer"] = viewer_path
+
     timing["total_pipeline"] = time.perf_counter() - total_start
 
     min_b, max_b = final_pcd.bounds
@@ -529,6 +548,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Colormap for depth visualization (default: %(default)s).",
     )
     parser.add_argument(
+        "--generate-viewer",
+        action="store_true",
+        help="Generate a standalone interactive HTML5 Three.js 3D web viewer.",
+    )
+    parser.add_argument(
         "--no-filter",
         action="store_true",
         help="Disable statistical outlier filtering.",
@@ -561,6 +585,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     print(f"Segmentation Engine: {args.segmentation_method}")
     print(f"Mesh Engine:         {args.mesh_method}")
     print(f"Refinement:          {'Enabled (' + args.smoothing_method + ', ' + str(args.smoothing_iterations) + ' iter)' if not args.no_refine else 'Disabled'}")
+    print(f"Generate 3D Viewer:  {'Yes' if args.generate_viewer else 'No'}")
     print("-" * 65)
 
     result = run_pipeline(
@@ -576,6 +601,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         refine=not args.no_refine,
         smoothing_method=args.smoothing_method,
         smoothing_iterations=args.smoothing_iterations,
+        generate_viewer=args.generate_viewer,
     )
 
     print("\n--- Pipeline Execution Summary ---")
@@ -608,6 +634,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     print("\n--- Generated Artifacts ---")
     for key, path in result.output_files.items():
         print(f"  • {key.ljust(24)}: {path}")
+
+    if "html_viewer" in result.output_files:
+        print("\n--- 🌐 Interactive 3D Web Viewer ---")
+        print(f"Open in your browser: open {result.output_files['html_viewer']}")
 
     print("=" * 65)
     print("✓ Parallax 3D reconstruction pipeline finished successfully.")

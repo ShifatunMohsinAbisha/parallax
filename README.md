@@ -81,7 +81,8 @@ Parallax/
 │   ├── point_cloud.py         # Open3D & NumPy statistical outlier filtering, PCD/PLY export
 │   ├── mesh_reconstruction.py # 3D surface mesh generation (Grid, Poisson, BPA) & export
 │   ├── refinement.py          # Mesh smoothing (Taubin/Laplacian), hole filling & boundary cleanup
-│   ├── pipeline.py            # Unified end-to-end 7-stage reconstruction CLI & orchestrator
+│   ├── visualize.py           # Standalone Three.js interactive 3D web viewer generator
+│   ├── pipeline.py            # Unified end-to-end 8-stage reconstruction CLI & orchestrator
 │   ├── data/                  # Dataset loaders & custom datasets
 │   ├── models/                # Neural network model definitions
 │   ├── training/              # Model training and fine-tuning loops
@@ -94,6 +95,7 @@ Parallax/
 │   ├── test_point_cloud.py
 │   ├── test_mesh_reconstruction.py
 │   ├── test_refinement.py
+│   ├── test_visualize.py
 │   └── test_pipeline.py
 ├── notebooks/                 # Jupyter exploration & visualization notebooks
 ├── data/                      # Input datasets (git-ignored)
@@ -106,19 +108,57 @@ Parallax/
 ## Getting Started
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone https://github.com/ShifatunMohsinAbisha/parallax.git
 cd parallax
 
-# Create and activate a virtual environment
+# 2. Create and activate a virtual environment
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# Run the complete end-to-end 7-stage 3D reconstruction pipeline on an image
-python -m src.pipeline path/to/image.png --output-dir outputs --smoothing-method taubin --smoothing-iterations 5
+# 4. Run the full end-to-end single-image 3D reconstruction pipeline
+python -m src.pipeline path/to/image.png --output-dir outputs --generate-viewer
+
+# 5. Open the interactive 3D viewer in your browser
+open outputs/viewer.html       # On macOS
+# On Linux: xdg-open outputs/viewer.html
+# On Windows: start outputs/viewer.html
+```
+
+### Interactive 3D Web Viewer
+
+You can also generate an interactive Three.js 3D web viewer directly from any `.glb` model using `src/visualize.py`:
+
+```bash
+# Generate a self-contained HTML viewer for any 3D mesh
+python -m src.visualize outputs/sample_vase_refined.glb --output outputs/viewer.html
+
+# View directly in your browser:
+open outputs/viewer.html
+```
+
+#### Viewer Controls:
+- **Left-Click + Drag**: Orbit and rotate around the 3D object.
+- **Right-Click + Drag** (or Shift + Drag): Pan the camera.
+- **Scroll Wheel**: Smooth zoom in / out.
+- **Floating Controls**: Toggle auto-rotation, inspect wireframe topology, toggle ground grid, and reset camera view.
+
+### Pipeline CLI Options
+
+```bash
+# Full command options
+python -m src.pipeline path/to/image.png \
+    --output-dir outputs \
+    --fov 60.0 \
+    --depth-method auto \
+    --segmentation-method auto \
+    --mesh-method auto \
+    --smoothing-method taubin \
+    --smoothing-iterations 5 \
+    --generate-viewer
 ```
 
 ## Models Used
