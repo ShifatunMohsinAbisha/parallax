@@ -1,0 +1,75 @@
+# ==========================================
+# Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# ==========================================
+# Virtual Environments
+# ==========================================
+venv/
+.venv/
+env/
+.env/
+
+# ==========================================
+# IDE / Editor
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ==========================================
+# Jupyter Notebooks
+# ==========================================
+.ipynb_checkpoints/
+
+# ==========================================
+# ML Model Weights & Checkpoints
+# ==========================================
+models/weights/
+models/checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.hdf5
+*.onnx
+*.pb
+*.tflite
+*.safetensors
+
+# ==========================================
+# Datasets (keep structure, ignore contents)
+# ==========================================
+data/raw/
+data/processed/
+data/external/
+*.tar
+*.tar.gz
+*.zip
+
+# ==========================================
+# Outputs (reconstructions, renders, logs)
+# ==========================================
+outputs/*
+!outputs/.gitkeep
+
+# ==========================================
+# Logs & Misc
+# ==========================================
+*.log
+wandb/
+mlruns/
+lightning_logs/
+tensorboard_logs/
