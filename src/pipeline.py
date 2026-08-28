@@ -80,6 +80,13 @@ from src.point_cloud import (
     render_point_cloud_views,
 )
 from src.preprocessing import load_image, preprocess, save_image
+from src.refinement import (
+    RefinementConfig,
+    RefinementMetrics,
+    RefinementResult,
+    create_refinement_comparison_image,
+    refine_mesh,
+)
 from src.segmentation import SegmentationResult, create_side_by_side_panel, overlay_mask, segment_object
 
 # ──────────────────────────────────────────────
@@ -98,6 +105,8 @@ class PipelineResult:
         Initial unfiltered 3D point cloud before outlier rejection.
     mesh : Optional[MeshReconstructionResult]
         Reconstructed 3D polygonal surface mesh result.
+    refinement : Optional[RefinementResult]
+        Refined, smoothed, and repaired 3D mesh result with before/after metrics.
     segmentation : SegmentationResult
         Object segmentation result with binary mask, soft mask, and metadata.
     depth : DepthResult
@@ -114,6 +123,7 @@ class PipelineResult:
     point_cloud: PointCloud
     raw_point_cloud: PointCloud
     mesh: Optional[MeshReconstructionResult]
+    refinement: Optional[RefinementResult]
     segmentation: SegmentationResult
     depth: DepthResult
     intrinsics: CameraIntrinsics
@@ -189,6 +199,9 @@ def run_pipeline(
     colormap: str = "inferno",
     filter_outliers: bool = True,
     clean_mesh_geometry: bool = True,
+    refine: bool = True,
+    smoothing_method: str = "taubin",
+    smoothing_iterations: int = 5,
     nb_neighbors: int = 20,
     std_ratio: float = 2.0,
     save_intermediate_artifacts: bool = True,
@@ -203,6 +216,7 @@ def run_pipeline(
       4. 2D-to-3D Geometry (Vectorized pinhole unprojection into 3D camera space)
       5. Point Cloud Post-Processing (Statistical noise filtering + PLY/PCD export)
       6. 3D Surface Mesh Reconstruction (Mesh generation, cleanup & OBJ/PLY/GLB export)
+      7. Mesh & Surface Refinement (Taubin/Laplacian smoothing & hole repair)
 
     Parameters
     ----------
@@ -226,6 +240,12 @@ def run_pipeline(
         Whether to perform statistical outlier filtering on the point cloud.
     clean_mesh_geometry : bool
         Whether to apply automated mesh cleanup and repair.
+    refine : bool
+        Whether to run post-reconstruction surface refinement and smoothing.
+    smoothing_method : str
+        Smoothing algorithm (``"taubin"``, ``"laplacian"``, or ``"none"``).
+    smoothing_iterations : int
+        Number of smoothing passes.
     nb_neighbors : int
         Neighbor count for statistical outlier removal.
     std_ratio : float
@@ -310,7 +330,7 @@ def run_pipeline(
     else:
         final_pcd = raw_pcd
 
-    # Export standard 3D file formats
+    # Export standard 3D point cloud formats
     ply_path = out_dir / f"{stem}_reconstruction.ply"
     pcd_path = out_dir / f"{stem}_reconstruction.pcd"
     export_point_cloud_ply(final_pcd, ply_path)
@@ -333,11 +353,42 @@ def run_pipeline(
         method=mesh_method,
         clean=clean_mesh_geometry,
     )
-    # Export mesh in OBJ, PLY, and GLB formats
+    # Export raw mesh in OBJ, PLY, and GLB formats
     mesh_files = export_mesh_all_formats(mesh_res.mesh, out_dir, stem=f"{stem}_reconstruction")
     saved_files.update(mesh_files)
     mesh_res.output_files = mesh_files
     timing["mesh_reconstruction"] = time.perf_counter() - t0
+
+    # ──────────────────────────────────────────────
+    # Stage 7: 3D Surface Mesh Refinement
+    # ──────────────────────────────────────────────
+    t0 = time.perf_counter()
+    refinement_res = None
+    if refine and mesh_res and len(mesh_res.mesh.faces) > 0:
+        ref_config = RefinementConfig(
+            smoothing_method=smoothing_method,
+            smoothing_iterations=smoothing_iterations,
+            fill_holes=True,
+            clean_boundaries=True,
+            remove_degenerates=True,
+        )
+        refinement_res = refine_mesh(mesh_res.mesh, config=ref_config)
+
+        # Export refined mesh
+        refined_files = export_mesh_all_formats(refinement_res.refined_mesh, out_dir, stem=f"{stem}_refined")
+        saved_files["refined_obj"] = refined_files["mesh_obj"]
+        saved_files["refined_ply"] = refined_files["mesh_ply"]
+        saved_files["refined_glb"] = refined_files["mesh_glb"]
+        refinement_res.output_files = refined_files
+
+        # Render before/after refinement comparison image
+        comp_img_path = out_dir / f"{stem}_refinement_comparison.png"
+        create_refinement_comparison_image(
+            refinement_res.original_mesh, refinement_res.refined_mesh, comp_img_path
+        )
+        saved_files["refinement_comparison"] = comp_img_path
+
+    timing["refinement"] = time.perf_counter() - t0
 
     # ──────────────────────────────────────────────
     # Optional Intermediate & Overview Visualizations
@@ -387,10 +438,25 @@ def run_pipeline(
         "foreground_ratio": seg_result.foreground_ratio,
     }
 
+    if refinement_res:
+        m = refinement_res.metrics
+        metadata["refinement"] = {
+            "vertices_before": m.vertices_before,
+            "vertices_after": m.vertices_after,
+            "vertex_delta": m.vertex_delta,
+            "faces_before": m.faces_before,
+            "faces_after": m.faces_after,
+            "face_delta": m.face_delta,
+            "holes_filled": m.holes_filled,
+            "degenerate_faces_removed": m.degenerate_faces_removed,
+            "roughness_reduction_pct": f"{m.roughness_reduction_pct:+.1f}%",
+        }
+
     return PipelineResult(
         point_cloud=final_pcd,
         raw_point_cloud=raw_pcd,
         mesh=mesh_res,
+        refinement=refinement_res,
         segmentation=seg_result,
         depth=depth_result,
         intrinsics=intrinsics,
@@ -444,6 +510,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="3D surface mesh reconstruction engine (default: %(default)s).",
     )
     parser.add_argument(
+        "--smoothing-method",
+        type=str,
+        default="taubin",
+        choices=["taubin", "laplacian", "none"],
+        help="Surface refinement smoothing technique (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--smoothing-iterations",
+        type=int,
+        default=5,
+        help="Number of refinement smoothing passes (default: %(default)s).",
+    )
+    parser.add_argument(
         "--colormap",
         type=str,
         default="inferno",
@@ -458,6 +537,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-clean-mesh",
         action="store_true",
         help="Disable automatic mesh repair.",
+    )
+    parser.add_argument(
+        "--no-refine",
+        action="store_true",
+        help="Disable post-reconstruction 3D refinement stage.",
     )
     return parser
 
@@ -476,6 +560,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     print(f"Depth Engine:        {args.depth_method}")
     print(f"Segmentation Engine: {args.segmentation_method}")
     print(f"Mesh Engine:         {args.mesh_method}")
+    print(f"Refinement:          {'Enabled (' + args.smoothing_method + ', ' + str(args.smoothing_iterations) + ' iter)' if not args.no_refine else 'Disabled'}")
     print("-" * 65)
 
     result = run_pipeline(
@@ -488,6 +573,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         colormap=args.colormap,
         filter_outliers=not args.no_filter,
         clean_mesh_geometry=not args.no_clean_mesh,
+        refine=not args.no_refine,
+        smoothing_method=args.smoothing_method,
+        smoothing_iterations=args.smoothing_iterations,
     )
 
     print("\n--- Pipeline Execution Summary ---")
@@ -497,15 +585,23 @@ def main(argv: Optional[List[str]] = None) -> None:
     print(f"4. Geometry Unproject:   {result.timing['geometry_unprojection']*1000:.1f} ms")
     print(f"5. Point Cloud Post:     {result.timing['point_cloud_processing']*1000:.1f} ms")
     print(f"6. Mesh Reconstruction:  {result.timing['mesh_reconstruction']*1000:.1f} ms ({result.metadata['mesh_method']})")
+    if result.refinement:
+        print(f"7. Mesh Refinement:      {result.timing['refinement']*1000:.1f} ms")
     print(f"Total Execution Time:    {result.timing['total_pipeline']*1000:.1f} ms ({result.timing['total_pipeline']:.2f} s)")
 
     print("\n--- 3D Reconstruction Metrics ---")
     print(f"Raw Points:              {result.raw_point_cloud.num_points:,}")
     print(f"Final Cleaned Points:    {result.point_cloud.num_points:,}")
     if result.mesh:
-        print(f"Mesh Vertices:           {result.mesh.num_vertices:,}")
-        print(f"Mesh Faces (Triangles):  {result.mesh.num_faces:,}")
-        print(f"Watertight Manifold:     {result.mesh.is_watertight}")
+        print(f"Initial Mesh Vertices:   {result.mesh.num_vertices:,}")
+        print(f"Initial Mesh Faces:      {result.mesh.num_faces:,}")
+    if result.refinement:
+        m = result.refinement.metrics
+        print(f"Refined Mesh Vertices:   {m.vertices_after:,} ({m.vertex_delta:+d})")
+        print(f"Refined Mesh Faces:      {m.faces_after:,} ({m.face_delta:+d})")
+        print(f"Holes Repaired:          {m.holes_filled:,}")
+        print(f"Roughness Reduction:     {m.roughness_reduction_pct:+.1f}%")
+
     center = result.point_cloud.center
     print(f"3D Geometric Centroid:   X={center[0]:.3f}, Y={center[1]:.3f}, Z={center[2]:.3f}")
 

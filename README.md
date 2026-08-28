@@ -44,11 +44,28 @@ Parallax takes a single 2D photograph as input and reconstructs a full 3D repres
                        └────────────┬────────────┘
                                     │
                                     ▼
+                       ┌─────────────────────────┐
+                       │ 6. Mesh Reconstruction  │ (src/mesh_reconstruction.py)
+                       │ - Grid / Poisson / BPA  │
+                       │ - Multi-format export   │
+                       └────────────┬────────────┘
+                                    │
+                                    ▼
+                       ┌─────────────────────────┐
+                       │  7. Refinement & Smooth │ (src/refinement.py)
+                       │ - Taubin / Laplacian    │
+                       │ - Hole repair & pruning │
+                       └────────────┬────────────┘
+                                    │
+                                    ▼
        ┌─────────────────────────────────────────────────────────┐
        │                 Reconstructed 3D Output                 │
-       │   • 3D Point Cloud (.ply, .pcd, .obj)                   │
+       │   • 3D Surface Meshes (.glb, .obj, .ply)                │
+       │   • Refined 3D Meshes (_refined.glb, .obj, .ply)        │
+       │   • 3D Point Clouds (.ply, .pcd)                        │
+       │   • Before/After Refinement Comparison Image (.png)     │
        │   • 3D Isometric Projection Screenshot (.png)           │
-       │   • 4-Panel End-to-End Diagnostic Overview              │
+       │   • 4-Panel End-to-End Diagnostic Overview (.png)       │
        └─────────────────────────────────────────────────────────┘
 ```
 
@@ -57,16 +74,18 @@ Parallax takes a single 2D photograph as input and reconstructs a full 3D repres
 ```
 Parallax/
 ├── src/
-│   ├── preprocessing.py    # Aspect-preserving resizing, normalization, image I/O
-│   ├── segmentation.py     # LRASPP MobileNetV3 & Saliency GrabCut object isolation
-│   ├── depth_estimation.py # MiDaS Small & Geometric monocular depth estimation
-│   ├── geometry.py         # Pinhole camera back-projection & surface normal computation
-│   ├── point_cloud.py      # Open3D & NumPy statistical outlier filtering, PCD/PLY export
-│   ├── pipeline.py         # Unified end-to-end reconstruction CLI & orchestrator
-│   ├── data/               # Dataset loaders & custom datasets
-│   ├── models/             # Neural network model definitions
-│   ├── training/           # Model training and fine-tuning loops
-│   └── inference/          # Batch inference and reconstruction scripts
+│   ├── preprocessing.py       # Aspect-preserving resizing, normalization, image I/O
+│   ├── segmentation.py        # LRASPP MobileNetV3 & Saliency GrabCut object isolation
+│   ├── depth_estimation.py    # MiDaS Small & Geometric monocular depth estimation
+│   ├── geometry.py            # Pinhole camera back-projection & surface normal computation
+│   ├── point_cloud.py         # Open3D & NumPy statistical outlier filtering, PCD/PLY export
+│   ├── mesh_reconstruction.py # 3D surface mesh generation (Grid, Poisson, BPA) & export
+│   ├── refinement.py          # Mesh smoothing (Taubin/Laplacian), hole filling & boundary cleanup
+│   ├── pipeline.py            # Unified end-to-end 7-stage reconstruction CLI & orchestrator
+│   ├── data/                  # Dataset loaders & custom datasets
+│   ├── models/                # Neural network model definitions
+│   ├── training/              # Model training and fine-tuning loops
+│   └── inference/             # Batch inference and reconstruction scripts
 ├── tests/
 │   ├── test_preprocessing.py
 │   ├── test_segmentation.py
@@ -74,12 +93,13 @@ Parallax/
 │   ├── test_geometry.py
 │   ├── test_point_cloud.py
 │   ├── test_mesh_reconstruction.py
+│   ├── test_refinement.py
 │   └── test_pipeline.py
-├── notebooks/              # Jupyter exploration & visualization notebooks
-├── data/                   # Input datasets (git-ignored)
-├── models/                 # Model weights and checkpoints (git-ignored)
-├── outputs/                # Reconstructions, 3D meshes, and renders (git-ignored)
-├── requirements.txt        # Python dependencies
+├── notebooks/                 # Jupyter exploration & visualization notebooks
+├── data/                      # Input datasets (git-ignored)
+├── models/                    # Model weights and checkpoints (git-ignored)
+├── outputs/                   # Reconstructions, 3D meshes, and renders (git-ignored)
+├── requirements.txt           # Python dependencies
 └── README.md
 ```
 
@@ -97,8 +117,8 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the complete end-to-end 3D reconstruction pipeline on an image
-python -m src.pipeline path/to/image.png --output-dir outputs --fov 60.0
+# Run the complete end-to-end 7-stage 3D reconstruction pipeline on an image
+python -m src.pipeline path/to/image.png --output-dir outputs --smoothing-method taubin --smoothing-iterations 5
 ```
 
 ## Models Used
@@ -134,22 +154,33 @@ Parallax supports multiple surface reconstruction algorithms to transform unstru
 | **Poisson Surface Reconstruction (`poisson`)** | Solves $\Delta \chi = \nabla \cdot \mathbf{V}$ over an adaptive octree | Watertight, smooth organic surfaces, robust to sensor noise | Requires normal vectors; smooths sharp creases | [MIT License](https://github.com/isl-org/Open3D/blob/main/LICENSE) (Open3D) | Organic models, watertight 3D printing |
 | **Ball-Pivoting Algorithm (`ball_pivoting`)** | Rolls virtual sphere across point triplets to form Delaunay-like triangles | Exact coordinate interpolation; retains sharp boundary edges | Sensitive to ball radius selection and point sparsity | [MIT License](https://github.com/isl-org/Open3D/blob/main/LICENSE) (Open3D) | Uniform point clouds, mechanical parts |
 
-#### Mesh Cleanup & Export Capabilities
-- **Automated Geometry Repair**: Eliminates degenerate (zero-area) faces, removes duplicate triangles and unreferenced vertices, repairs inconsistent surface normal orientations, and stitches small boundary holes.
-- **Export Formats**:
-  - **`.glb`** (Binary glTF 2.0) — Standard 3D web format with embedded vertex colors and material properties.
-  - **`.obj`** (Wavefront) — Universally supported format for Blender, Unity, Unreal Engine, and CAD tools.
-  - **`.ply`** (Polygon File Format) — Point- and mesh-level geometry storage with surface normals.
+### 4. 3D Mesh Refinement & Surface Smoothing
 
-### Model Selection Rationale
+The refinement stage operates as a post-processing pass to optimize visual fidelity and surface topology:
 
-- **MiDaS v2.1 Small**: Selected as the primary deep learning depth estimator due to its optimal balance between relative depth fidelity and CPU inference speed. Its lightweight footprint (~45 MB) and compatibility with Torch Hub and ONNX runtimes make it ideal for accessible 3D reconstruction without discrete GPUs.
-- **Structured Grid & Trimesh**: Provides sub-10ms mesh generation on CPU while guaranteeing that reconstructed vertices and colors correspond exactly to monocular pixels.
-- **Decoupled Architecture**: Model loading is separated from inference logic via `BaseDepthEstimator` and `load_depth_model()`, allowing users to swap between neural models and offline classical estimators with zero code changes.
-- **Offline / Edge Fallback**: The built-in `GeometricShadingEstimator` and `GridTriangulation` enable instant, zero-weight 3D reconstruction in air-gapped or network-constrained setups.
+- **Taubin Smoothing (`"taubin"`)**: Two-step volume-preserving filter alternating between positive diffusion ($\lambda > 0$) and negative expansion ($\mu < -\lambda < 0$). Attenuates high-frequency depth quantization ripples without causing volumetric shrinkage.
+- **Laplacian Smoothing (`"laplacian"`)**: Neighborhood barycentric relaxation to minimize local normal variance.
+- **Hole Filling & Repair**: Closes small open boundary loops with Delaunay ear-clipping triangulation.
+- **Boundary & Fragment Pruning**: Trims detached high-discontinuity silhouette triangles.
+
+---
+
+## Known Limitations of Single-Image 3D Reconstruction
+
+Single-image 3D reconstruction is an **ill-posed inverse problem**. Refinement performs best-effort geometric enhancement, but users should be aware of fundamental constraints:
+
+1. **Occluded Geometry (The "Backside" Problem)**:
+   - A single 2D photograph contains zero visual or geometric information about surfaces occluded from the camera viewpoint (e.g. the back or underside of an object).
+   - Single-image pipelines reconstruct high-fidelity **2.5D surface manifolds (bas-reliefs / front-facing shells)** rather than true 360° scanned solid volumes. Attempting to force closed watertight meshes without multi-view observations involves heuristic hallucination.
+
+2. **Scale & Metric Depth Ambiguity**:
+   - Monocular depth networks infer **relative depth** (affine scale and shift invariant) rather than absolute physical millimeters, unless calibrated with known object dimensions or metric camera sensors.
+
+3. **Specular Highlights & Textureless Surfaces**:
+   - Monocular depth estimators rely on shading gradients, edge contours, and learned semantic priors. Uniformly reflective, transparent, or textureless surfaces can produce localized depth distortions that geometric smoothing attenuates but cannot completely resolve.
+
+---
 
 ## License
 
 TBD
-
-
