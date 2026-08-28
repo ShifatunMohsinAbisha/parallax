@@ -73,6 +73,7 @@ Parallax/
 │   ├── test_depth_estimation.py
 │   ├── test_geometry.py
 │   ├── test_point_cloud.py
+│   ├── test_mesh_reconstruction.py
 │   └── test_pipeline.py
 ├── notebooks/              # Jupyter exploration & visualization notebooks
 ├── data/                   # Input datasets (git-ignored)
@@ -123,13 +124,32 @@ We researched and benchmarked candidate architectures for monocular depth estima
 | **DPT-Large (`dpt_large`)** | ViT-Large Transformer | ~1.3 GB / ~340M params | >1200 ms | [MIT License](https://github.com/isl-org/MiDaS/blob/master/LICENSE) | Benchmark only (Heavy compute) |
 | **Geometric Shading (`geometric_shading`)** | Distance Transform + Shape-from-Shading | 0 MB (Built-in) | <10 ms | [Apache 2.0](https://github.com/opencv/opencv/blob/4.x/LICENSE) | **SELECTED (Offline Fallback)** |
 
+### 3. 3D Surface Mesh Reconstruction
+
+Parallax supports multiple surface reconstruction algorithms to transform unstructured point clouds into continuous polygonal 3D models:
+
+| Reconstruction Method | Core Technique | Strengths | Trade-offs | License / Engine | Recommended For |
+|---|---|---|---|---|---|
+| **Structured Grid Triangulation (`grid`)** | Monocular quad-pair triangulation with depth discontinuity thresholding | Ultra-fast (<5 ms), deterministic topology, preserves fine UV alignment | Single-view front-face manifold | [MIT License](https://github.com/mikedh/trimesh/blob/main/LICENSE.md) (Trimesh) | **Default single-image 3D generation** |
+| **Poisson Surface Reconstruction (`poisson`)** | Solves $\Delta \chi = \nabla \cdot \mathbf{V}$ over an adaptive octree | Watertight, smooth organic surfaces, robust to sensor noise | Requires normal vectors; smooths sharp creases | [MIT License](https://github.com/isl-org/Open3D/blob/main/LICENSE) (Open3D) | Organic models, watertight 3D printing |
+| **Ball-Pivoting Algorithm (`ball_pivoting`)** | Rolls virtual sphere across point triplets to form Delaunay-like triangles | Exact coordinate interpolation; retains sharp boundary edges | Sensitive to ball radius selection and point sparsity | [MIT License](https://github.com/isl-org/Open3D/blob/main/LICENSE) (Open3D) | Uniform point clouds, mechanical parts |
+
+#### Mesh Cleanup & Export Capabilities
+- **Automated Geometry Repair**: Eliminates degenerate (zero-area) faces, removes duplicate triangles and unreferenced vertices, repairs inconsistent surface normal orientations, and stitches small boundary holes.
+- **Export Formats**:
+  - **`.glb`** (Binary glTF 2.0) — Standard 3D web format with embedded vertex colors and material properties.
+  - **`.obj`** (Wavefront) — Universally supported format for Blender, Unity, Unreal Engine, and CAD tools.
+  - **`.ply`** (Polygon File Format) — Point- and mesh-level geometry storage with surface normals.
+
 ### Model Selection Rationale
 
 - **MiDaS v2.1 Small**: Selected as the primary deep learning depth estimator due to its optimal balance between relative depth fidelity and CPU inference speed. Its lightweight footprint (~45 MB) and compatibility with Torch Hub and ONNX runtimes make it ideal for accessible 3D reconstruction without discrete GPUs.
+- **Structured Grid & Trimesh**: Provides sub-10ms mesh generation on CPU while guaranteeing that reconstructed vertices and colors correspond exactly to monocular pixels.
 - **Decoupled Architecture**: Model loading is separated from inference logic via `BaseDepthEstimator` and `load_depth_model()`, allowing users to swap between neural models and offline classical estimators with zero code changes.
-- **Offline / Edge Fallback**: The built-in `GeometricShadingEstimator` enables instant, zero-weight monocular depth generation in air-gapped or network-constrained setups.
+- **Offline / Edge Fallback**: The built-in `GeometricShadingEstimator` and `GridTriangulation` enable instant, zero-weight 3D reconstruction in air-gapped or network-constrained setups.
 
 ## License
 
 TBD
+
 

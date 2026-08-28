@@ -66,6 +66,12 @@ from PIL import Image
 
 from src.depth_estimation import DepthResult, estimate_depth
 from src.geometry import CameraIntrinsics, PointCloud, depth_to_point_cloud, estimate_camera_intrinsics
+from src.mesh_reconstruction import (
+    MeshReconstructionResult,
+    clean_mesh,
+    export_mesh_all_formats,
+    reconstruct_surface_mesh,
+)
 from src.point_cloud import (
     PointCloudProcessingResult,
     clean_point_cloud,
@@ -90,6 +96,8 @@ class PipelineResult:
         Final cleaned 3D point cloud.
     raw_point_cloud : PointCloud
         Initial unfiltered 3D point cloud before outlier rejection.
+    mesh : Optional[MeshReconstructionResult]
+        Reconstructed 3D polygonal surface mesh result.
     segmentation : SegmentationResult
         Object segmentation result with binary mask, soft mask, and metadata.
     depth : DepthResult
@@ -105,6 +113,7 @@ class PipelineResult:
     """
     point_cloud: PointCloud
     raw_point_cloud: PointCloud
+    mesh: Optional[MeshReconstructionResult]
     segmentation: SegmentationResult
     depth: DepthResult
     intrinsics: CameraIntrinsics
@@ -176,8 +185,10 @@ def run_pipeline(
     fov_degrees: float = 60.0,
     depth_method: str = "auto",
     segmentation_method: str = "auto",
+    mesh_method: str = "auto",
     colormap: str = "inferno",
     filter_outliers: bool = True,
+    clean_mesh_geometry: bool = True,
     nb_neighbors: int = 20,
     std_ratio: float = 2.0,
     save_intermediate_artifacts: bool = True,
@@ -191,6 +202,7 @@ def run_pipeline(
       3. Depth Estimation (Generate dense relative depth map & heatmap)
       4. 2D-to-3D Geometry (Vectorized pinhole unprojection into 3D camera space)
       5. Point Cloud Post-Processing (Statistical noise filtering + PLY/PCD export)
+      6. 3D Surface Mesh Reconstruction (Mesh generation, cleanup & OBJ/PLY/GLB export)
 
     Parameters
     ----------
@@ -206,10 +218,14 @@ def run_pipeline(
         Depth estimation algorithm (``"auto"``, ``"midas_small"``, ``"geometric_shading"``).
     segmentation_method : str
         Object segmentation algorithm (``"auto"``, ``"lraspp"``, ``"saliency_grabcut"``).
+    mesh_method : str
+        Surface mesh reconstruction algorithm (``"auto"``, ``"grid"``, ``"poisson"``, ``"ball_pivoting"``).
     colormap : str
         Colormap name for depth heatmap rendering (``"inferno"``, ``"viridis"``, etc.).
     filter_outliers : bool
         Whether to perform statistical outlier filtering on the point cloud.
+    clean_mesh_geometry : bool
+        Whether to apply automated mesh cleanup and repair.
     nb_neighbors : int
         Neighbor count for statistical outlier removal.
     std_ratio : float
@@ -222,7 +238,7 @@ def run_pipeline(
     Returns
     -------
     PipelineResult
-        Dataclass containing the final 3D point cloud, intermediate results, metrics, and saved paths.
+        Dataclass containing the final 3D point cloud, mesh, metrics, and saved paths.
     """
     input_path = Path(image_path)
     if not input_path.exists():
@@ -309,6 +325,21 @@ def run_pipeline(
     timing["point_cloud_processing"] = time.perf_counter() - t0
 
     # ──────────────────────────────────────────────
+    # Stage 6: 3D Surface Mesh Reconstruction
+    # ──────────────────────────────────────────────
+    t0 = time.perf_counter()
+    mesh_res = reconstruct_surface_mesh(
+        final_pcd,
+        method=mesh_method,
+        clean=clean_mesh_geometry,
+    )
+    # Export mesh in OBJ, PLY, and GLB formats
+    mesh_files = export_mesh_all_formats(mesh_res.mesh, out_dir, stem=f"{stem}_reconstruction")
+    saved_files.update(mesh_files)
+    mesh_res.output_files = mesh_files
+    timing["mesh_reconstruction"] = time.perf_counter() - t0
+
+    # ──────────────────────────────────────────────
     # Optional Intermediate & Overview Visualizations
     # ──────────────────────────────────────────────
     if save_intermediate_artifacts:
@@ -344,8 +375,12 @@ def run_pipeline(
         "fov_degrees": fov_degrees,
         "depth_method": depth_result.method,
         "segmentation_method": seg_result.method,
+        "mesh_method": mesh_res.method,
         "raw_points": raw_pcd.num_points,
         "cleaned_points": final_pcd.num_points,
+        "num_vertices": mesh_res.num_vertices,
+        "num_faces": mesh_res.num_faces,
+        "is_watertight": mesh_res.is_watertight,
         "centroid": center.tolist(),
         "bounds_min": min_b.tolist(),
         "bounds_max": max_b.tolist(),
@@ -355,6 +390,7 @@ def run_pipeline(
     return PipelineResult(
         point_cloud=final_pcd,
         raw_point_cloud=raw_pcd,
+        mesh=mesh_res,
         segmentation=seg_result,
         depth=depth_result,
         intrinsics=intrinsics,
@@ -401,6 +437,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Object segmentation engine (default: %(default)s).",
     )
     parser.add_argument(
+        "--mesh-method",
+        type=str,
+        default="auto",
+        choices=["auto", "grid", "poisson", "ball_pivoting"],
+        help="3D surface mesh reconstruction engine (default: %(default)s).",
+    )
+    parser.add_argument(
         "--colormap",
         type=str,
         default="inferno",
@@ -410,6 +453,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-filter",
         action="store_true",
         help="Disable statistical outlier filtering.",
+    )
+    parser.add_argument(
+        "--no-clean-mesh",
+        action="store_true",
+        help="Disable automatic mesh repair.",
     )
     return parser
 
@@ -427,6 +475,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     print(f"Camera FOV:          {args.fov}°")
     print(f"Depth Engine:        {args.depth_method}")
     print(f"Segmentation Engine: {args.segmentation_method}")
+    print(f"Mesh Engine:         {args.mesh_method}")
     print("-" * 65)
 
     result = run_pipeline(
@@ -435,8 +484,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         fov_degrees=args.fov,
         depth_method=args.depth_method,
         segmentation_method=args.segmentation_method,
+        mesh_method=args.mesh_method,
         colormap=args.colormap,
         filter_outliers=not args.no_filter,
+        clean_mesh_geometry=not args.no_clean_mesh,
     )
 
     print("\n--- Pipeline Execution Summary ---")
@@ -445,11 +496,16 @@ def main(argv: Optional[List[str]] = None) -> None:
     print(f"3. Depth Estimation:     {result.timing['depth_estimation']*1000:.1f} ms ({result.depth.method})")
     print(f"4. Geometry Unproject:   {result.timing['geometry_unprojection']*1000:.1f} ms")
     print(f"5. Point Cloud Post:     {result.timing['point_cloud_processing']*1000:.1f} ms")
+    print(f"6. Mesh Reconstruction:  {result.timing['mesh_reconstruction']*1000:.1f} ms ({result.metadata['mesh_method']})")
     print(f"Total Execution Time:    {result.timing['total_pipeline']*1000:.1f} ms ({result.timing['total_pipeline']:.2f} s)")
 
     print("\n--- 3D Reconstruction Metrics ---")
     print(f"Raw Points:              {result.raw_point_cloud.num_points:,}")
     print(f"Final Cleaned Points:    {result.point_cloud.num_points:,}")
+    if result.mesh:
+        print(f"Mesh Vertices:           {result.mesh.num_vertices:,}")
+        print(f"Mesh Faces (Triangles):  {result.mesh.num_faces:,}")
+        print(f"Watertight Manifold:     {result.mesh.is_watertight}")
     center = result.point_cloud.center
     print(f"3D Geometric Centroid:   X={center[0]:.3f}, Y={center[1]:.3f}, Z={center[2]:.3f}")
 
