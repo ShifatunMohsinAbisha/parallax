@@ -93,7 +93,7 @@ def load_image(path: Union[str, Path]) -> np.ndarray:
 
 
 def save_image(image: np.ndarray, path: Union[str, Path]) -> Path:
-    """Save an RGB uint8 image to *path*.
+    """Save an RGB, RGBA, or grayscale uint8/float image to *path*.
 
     If *image* is float, it is clipped to [0, 1] and scaled to uint8
     automatically.
@@ -105,7 +105,14 @@ def save_image(image: np.ndarray, path: Union[str, Path]) -> Path:
         image = np.clip(image, 0.0, 1.0)
         image = (image * 255).astype(np.uint8)
 
-    Image.fromarray(image, mode="RGB").save(str(path))
+    if image.ndim == 2:
+        pil_img = Image.fromarray(image, mode="L")
+    elif image.ndim == 3 and image.shape[2] == 4:
+        pil_img = Image.fromarray(image, mode="RGBA")
+    else:
+        pil_img = Image.fromarray(image, mode="RGB")
+
+    pil_img.save(str(path))
     return path
 
 
@@ -265,6 +272,11 @@ def estimate_background_mask(
         is_dark = gray < threshold
         is_bright = gray > (255 - threshold)
         return (is_dark | is_bright).astype(np.uint8)
+    if method in ("segmentation", "grabcut", "auto"):
+        from src.segmentation import segment_object
+        seg_res = segment_object(image, method="saliency_grabcut" if method == "grabcut" else "auto")
+        # Invert foreground binary mask (1 for background, 0 for foreground)
+        return (1 - seg_res.binary_mask).astype(np.uint8)
     raise ValueError(f"Unknown background method: {method!r}")
 
 
