@@ -82,6 +82,7 @@ Parallax/
 │   ├── mesh_reconstruction.py # 3D surface mesh generation (Grid, Poisson, BPA) & export
 │   ├── refinement.py          # Mesh smoothing (Taubin/Laplacian), hole filling & boundary cleanup
 │   ├── visualize.py           # Standalone Three.js interactive 3D web viewer generator
+│   ├── evaluation.py          # Quantitative benchmark (Chamfer & Point-to-Mesh metrics)
 │   ├── pipeline.py            # Unified end-to-end 8-stage reconstruction CLI & orchestrator
 │   ├── data/                  # Dataset loaders & custom datasets
 │   ├── models/                # Neural network model definitions
@@ -96,6 +97,7 @@ Parallax/
 │   ├── test_mesh_reconstruction.py
 │   ├── test_refinement.py
 │   ├── test_visualize.py
+│   ├── test_evaluation.py
 │   └── test_pipeline.py
 ├── notebooks/                 # Jupyter exploration & visualization notebooks
 ├── data/                      # Input datasets (git-ignored)
@@ -159,6 +161,42 @@ python -m src.pipeline path/to/image.png \
     --smoothing-method taubin \
     --smoothing-iterations 5 \
     --generate-viewer
+```
+
+## Quantitative Evaluation & Benchmark
+
+### Evaluation Methodology
+
+Because massive 3D scanner datasets (such as ShapeNet) require extensive GPU clusters and heavy storage downloads, Parallax employs a **synthetic geometric primitive benchmark** (Cube, Sphere, Cylinder, Cone) with known exact analytical geometry.
+
+This approach provides a controlled, reproducible, high-precision quantitative evaluation:
+1. Each 3D primitive is rendered to a calibrated 2D image via the pinhole camera projection model.
+2. The image is passed through the full Parallax 8-stage reconstruction pipeline.
+3. The reconstructed 3D point cloud / mesh is aligned and evaluated against the ground-truth 3D model.
+
+### Mathematical Formulations
+
+#### 1. Symmetric Chamfer Distance (CD)
+$$\text{CD}(P, Q) = \frac{1}{|P|} \sum_{p \in P} \min_{q \in Q} \|p - q\|_2^2 + \frac{1}{|Q|} \sum_{q \in Q} \min_{p \in P} \|q - p\|_2^2$$
+
+Where $P$ is the reconstructed point cloud and $Q$ is the ground-truth surface sample set.
+
+#### 2. Point-to-Mesh Surface Distance (P2M)
+$$d_{\text{P2M}}(P, M_{\text{gt}}) = \frac{1}{|P|} \sum_{p \in P} \min_{s \in \text{Surface}(M_{\text{gt}})} \|p - s\|_2$$
+
+### Benchmark Results Summary
+
+| Synthetic Primitive | Chamfer Distance (L2) | Chamfer Distance (L1) | Point-to-Mesh Dist | GT Verts / Faces | Reconstructed Points | Reconstructed Faces | Runtime (s) |
+|---|---|---|---|---|---|---|---|
+| **Cube** | `0.08486` | `0.15078` | `0.13713` | 8 / 12 | 17,334 | 33,690 | 8.09s |
+| **Sphere** | `0.38235` | `0.38325` | `0.36557` | 642 / 1,280 | 8,469 | 16,562 | 2.84s |
+| **Cylinder** | `0.23838` | `0.30227` | `0.31808` | 98 / 192 | 11,493 | 22,451 | 4.17s |
+| **Cone** | `0.18252` | `0.25427` | `0.22835` | 50 / 96 | 6,412 | 12,507 | 1.88s |
+| **AVERAGE / MEAN** | **`0.22203`** | **`0.27264`** | **`0.26228`** | — | — | — | **4.25s** |
+
+To reproduce this benchmark locally:
+```bash
+python -m src.evaluation --output-dir outputs --eval-data-dir data/eval_shapes
 ```
 
 ## Models Used
