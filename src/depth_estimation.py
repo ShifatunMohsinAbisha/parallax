@@ -253,8 +253,8 @@ class MiDaSEstimator(BaseDepthEstimator):
 
         import torch
 
-        # Load model architecture and transforms from Torch Hub
-        self._model = torch.hub.load("intel-isl/MiDaS", self.model_type, trust_repo=True)
+        # Load model architecture and pretrained weights from Torch Hub
+        self._model = torch.hub.load("intel-isl/MiDaS", self.model_type, pretrained=True, trust_repo=True)
         self._model.to(self.device)
         self._model.eval()
 

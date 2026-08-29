@@ -513,11 +513,15 @@ def segment_object(
             if _GLOBAL_TORCH_SEGMENTER is None or _GLOBAL_TORCH_SEGMENTER.model_name != target_model:
                 _GLOBAL_TORCH_SEGMENTER = TorchSegmenter(model_name=target_model, device=device)
 
-            return _GLOBAL_TORCH_SEGMENTER.segment(
+            result = _GLOBAL_TORCH_SEGMENTER.segment(
                 image,
                 threshold=threshold,
                 keep_largest_only=keep_largest_only,
             )
+            # If auto mode and neural network detected negligible foreground (< 4%), fallback to spatial GrabCut
+            if method == "auto" and result.foreground_ratio < 0.04:
+                return segment_saliency_grabcut(image, keep_largest_only=keep_largest_only)
+            return result
         except Exception:
             if method != "auto":
                 raise
