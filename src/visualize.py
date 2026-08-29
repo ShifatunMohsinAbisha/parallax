@@ -293,20 +293,16 @@ HTML_VIEWER_TEMPLATE = """<!DOCTYPE html>
             const size = box.getSize(new THREE.Vector3());
             const center = box.getCenter(new THREE.Vector3());
 
-            // Center geometry at origin
-            object.position.x += (object.position.x - center.x);
-            object.position.y += (object.position.y - center.y);
-            object.position.z += (object.position.z - center.z);
-
             const maxDim = Math.max(size.x, size.y, size.z);
-            if (maxDim > 0) {{
-                const scale = 1.6 / maxDim;
-                object.scale.set(scale, scale, scale);
-            }}
+            const scale = maxDim > 0 ? (1.8 / maxDim) : 1.0;
 
-            gridHelper.position.y = -0.85;
+            // Scale and center object precisely at scene origin (0, 0, 0)
+            object.scale.set(scale, scale, scale);
+            object.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+
+            gridHelper.position.y = -0.9;
             controls.target.set(0, 0, 0);
-            camera.position.set(0, 0.4, 2.6);
+            camera.position.set(0, 0.3, 2.5);
             controls.update();
         }}
 

@@ -170,6 +170,9 @@ def reconstruct_grid_mesh(
     grid[v_coords[valid_bounds], u_coords[valid_bounds]] = np.where(valid_bounds)[0]
 
     faces: List[Tuple[int, int, int]] = []
+    z_span = float(np.ptp(points[:, 2])) if len(points) > 0 else 1.0
+    # Adapt threshold dynamically to whether Z is normalized [0,1] or metric scale
+    thresh = depth_discontinuity_threshold if z_span <= 1.0 else (depth_discontinuity_threshold * z_span)
 
     # Iterate over 2×2 cell neighborhoods
     for r in range(h - 1):
@@ -182,13 +185,13 @@ def reconstruct_grid_mesh(
             # Upper triangle (TL, BL, TR)
             if idx_tl != -1 and idx_bl != -1 and idx_tr != -1:
                 z_vals = [points[idx_tl, 2], points[idx_bl, 2], points[idx_tr, 2]]
-                if (max(z_vals) - min(z_vals)) <= depth_discontinuity_threshold:
+                if (max(z_vals) - min(z_vals)) <= thresh:
                     faces.append((idx_tl, idx_bl, idx_tr))
 
             # Lower triangle (TR, BL, BR)
             if idx_tr != -1 and idx_bl != -1 and idx_br != -1:
                 z_vals = [points[idx_tr, 2], points[idx_bl, 2], points[idx_br, 2]]
-                if (max(z_vals) - min(z_vals)) <= depth_discontinuity_threshold:
+                if (max(z_vals) - min(z_vals)) <= thresh:
                     faces.append((idx_tr, idx_bl, idx_br))
 
     faces_arr = np.array(faces, dtype=np.int64) if len(faces) > 0 else np.zeros((0, 3), dtype=np.int64)
