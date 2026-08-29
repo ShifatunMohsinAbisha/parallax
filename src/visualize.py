@@ -310,32 +310,47 @@ HTML_VIEWER_TEMPLATE = """<!DOCTYPE html>
             controls.update();
         }}
 
-        loader.load(
-            modelSource,
-            function (gltf) {{
-                currentModel = gltf.scene;
-                // Enable two-sided rendering & vertex colors
-                currentModel.traverse((node) => {{
-                    if (node.isMesh && node.material) {{
-                        node.material.side = THREE.DoubleSide;
-                        node.material.roughness = 0.6;
-                        node.material.metalness = 0.1;
-                    }}
-                }});
+        function onGltfLoaded(gltf) {{
+            currentModel = gltf.scene;
+            // Enable two-sided rendering & vertex colors
+            currentModel.traverse((node) => {{
+                if (node.isMesh && node.material) {{
+                    node.material.side = THREE.DoubleSide;
+                    node.material.roughness = 0.6;
+                    node.material.metalness = 0.1;
+                }}
+            }});
 
-                scene.add(currentModel);
-                fitModelToView(currentModel);
+            scene.add(currentModel);
+            fitModelToView(currentModel);
 
-                // Fade out loader
-                loaderElement.style.opacity = '0';
-                setTimeout(() => loaderElement.style.display = 'none', 400);
-            }},
-            undefined,
-            function (error) {{
-                console.error('Error loading 3D model:', error);
-                loaderElement.innerHTML = '<p style="color:#ef4444;">Failed to load 3D model.</p>';
+            // Fade out loader
+            loaderElement.style.opacity = '0';
+            setTimeout(() => loaderElement.style.display = 'none', 400);
+        }}
+
+        function onGltfError(error) {{
+            console.error('Error loading 3D model:', error);
+            loaderElement.innerHTML = '<p style="color:#ef4444;">Failed to load 3D model.</p>';
+        }}
+
+        if (modelSource.startsWith('data:')) {{
+            // Direct Base64 decoding into ArrayBuffer (Zero-fetch / Zero-CORS safe)
+            try {{
+                const base64Content = modelSource.indexOf(',') >= 0 ? modelSource.split(',')[1] : modelSource;
+                const binaryStr = atob(base64Content);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {{
+                    bytes[i] = binaryStr.charCodeAt(i);
+                }}
+                loader.parse(bytes.buffer, '', onGltfLoaded, onGltfError);
+            }} catch (err) {{
+                console.warn('Direct parse failed, falling back to loader.load:', err);
+                loader.load(modelSource, onGltfLoaded, undefined, onGltfError);
             }}
-        );
+        }} else {{
+            loader.load(modelSource, onGltfLoaded, undefined, onGltfError);
+        }}
 
         // ──────────────────────────────────────────────
         // 4. UI Interactive Controls
