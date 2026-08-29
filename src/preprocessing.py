@@ -353,11 +353,19 @@ def preprocess(
     original = load_image(path)
     working = original.copy()
 
+    effective_pad_color = pad_color
+    if pad_color == (0, 0, 0):
+        # Auto-detect background color from image boundary if background is non-black
+        border_pixels = np.concatenate([original[0, :], original[-1, :], original[:, 0], original[:, -1]], axis=0)
+        auto_bg = tuple(int(round(x)) for x in np.median(border_pixels, axis=0))
+        if np.mean(auto_bg) > 30:
+            effective_pad_color = auto_bg
+
     if remove_background:
         bg_mask = estimate_background_mask(working)
-        working = apply_mask(working, bg_mask, fill_color=pad_color)
+        working = apply_mask(working, bg_mask, fill_color=effective_pad_color)
 
-    resized, metadata = resize_with_padding(working, target_size, pad_color)
+    resized, metadata = resize_with_padding(working, target_size, effective_pad_color)
     normalized = normalize(resized, mean, std)
 
     return {

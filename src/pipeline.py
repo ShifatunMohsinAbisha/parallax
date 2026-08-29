@@ -373,7 +373,7 @@ def run_pipeline(
         ref_config = RefinementConfig(
             smoothing_method=smoothing_method,
             smoothing_iterations=smoothing_iterations,
-            fill_holes=True,
+            fill_holes=False,
             clean_boundaries=True,
             remove_degenerates=True,
         )

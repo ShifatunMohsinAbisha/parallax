@@ -458,7 +458,14 @@ def depth_to_point_cloud(
     u_grid, v_grid = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
 
     # 3. Vectorized pinhole unprojection equations
-    depth_clamped = np.maximum(depth_map.astype(np.float32), 0.0)
+    depth_raw = depth_map.astype(np.float32)
+    # If depth map is a relative disparity map in [0, 1] (from monocular depth models),
+    # map disparity to positive camera distance: d=1 (closest foreground) -> Z=1.0, d=0 (farthest) -> Z=1.35
+    if depth_raw.max() <= 1.05 and depth_raw.min() >= -1e-5:
+        depth_clamped = 1.0 + 0.35 * (1.0 - np.clip(depth_raw, 0.0, 1.0))
+    else:
+        depth_clamped = np.maximum(depth_raw, 0.0)
+
     x_grid = (u_grid - intrinsics.cx) * depth_clamped / intrinsics.fx
     if y_up:
         y_grid = -(v_grid - intrinsics.cy) * depth_clamped / intrinsics.fy

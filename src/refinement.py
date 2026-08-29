@@ -99,7 +99,7 @@ class RefinementConfig:
     taubin_lambda: float = 0.5
     taubin_mu: float = -0.53
     laplacian_damping: float = 0.4
-    fill_holes: bool = True
+    fill_holes: bool = False
     clean_boundaries: bool = True
     remove_degenerates: bool = True
 

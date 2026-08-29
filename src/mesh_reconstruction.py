@@ -212,6 +212,14 @@ def reconstruct_grid_mesh(
         vertex_colors=vertex_colors,
         process=True,
     )
+
+    # Trim glancing boundary triangles pointing away from the camera
+    if len(mesh.faces) > 0 and len(mesh.face_normals) > 0:
+        valid_front_faces = mesh.face_normals[:, 2] > 0.01
+        if 0 < valid_front_faces.sum() < len(mesh.faces):
+            mesh.update_faces(valid_front_faces)
+            mesh.remove_unreferenced_vertices()
+
     return mesh
 
 
@@ -301,7 +309,7 @@ def reconstruct_open3d_mesh(
 
 def clean_mesh(
     mesh: trimesh.Trimesh,
-    fill_holes: bool = True,
+    fill_holes: bool = False,
     remove_degenerate: bool = True,
     smooth_laplacian: bool = False,
     laplacian_iterations: int = 3,

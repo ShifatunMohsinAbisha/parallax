@@ -233,10 +233,25 @@ def segment_saliency_grabcut(
     """
     h, w = image.shape[:2]
 
-    # Margin box initialization
+    # 1. Estimate background color from border margins
+    border_pixels = np.concatenate([image[0, :], image[-1, :], image[:, 0], image[:, -1]], axis=0)
+    bg_color = np.median(border_pixels, axis=0)
+
+    # 2. Distance in RGB color space to background
+    color_diff = np.linalg.norm(image.astype(np.float32) - bg_color.astype(np.float32), axis=-1)
+
+    # 3. Seed GrabCut mask
+    mask = np.full((h, w), cv2.GC_PR_FGD, dtype=np.uint8)
     margin_y = max(1, int(round(h * rect_margin_ratio)))
     margin_x = max(1, int(round(w * rect_margin_ratio)))
-    rect = (margin_x, margin_y, max(1, w - 2 * margin_x), max(1, h - 2 * margin_y))
+    mask[:margin_y, :] = cv2.GC_BGD
+    mask[-margin_y:, :] = cv2.GC_BGD
+    mask[:, :margin_x] = cv2.GC_BGD
+    mask[:, -margin_x:] = cv2.GC_BGD
+
+    # Seed background and foreground regions
+    mask[color_diff < 15.0] = cv2.GC_BGD
+    mask[color_diff > 25.0] = cv2.GC_PR_FGD
 
     # Convert RGB to BGR for OpenCV GrabCut
     bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
@@ -244,25 +259,22 @@ def segment_saliency_grabcut(
     # Allocate GrabCut state models
     bgd_model = np.zeros((1, 65), np.float64)
     fgd_model = np.zeros((1, 65), np.float64)
-    mask = np.zeros((h, w), np.uint8)
 
     try:
         cv2.grabCut(
             bgr,
             mask,
-            rect,
+            None,
             bgd_model,
             fgd_model,
             iterCount=num_iterations,
-            mode=cv2.GC_INIT_WITH_RECT,
+            mode=cv2.GC_INIT_WITH_MASK,
         )
         # GC_FGD (1) and GC_PR_FGD (3) represent definite and probable foreground
         binary_mask = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 1, 0).astype(np.uint8)
     except Exception:
-        # Fallback if GrabCut encounters a degenerate border or uniform color
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        binary_mask = (thresh > 0).astype(np.uint8)
+        # Fallback if GrabCut encounters uniform color
+        binary_mask = (color_diff > 20.0).astype(np.uint8)
 
     # Post-process mask
     binary_mask = smooth_mask(binary_mask, kernel_size=5)
@@ -283,7 +295,7 @@ def segment_saliency_grabcut(
         bbox=bbox,
         foreground_ratio=fg_ratio,
         method="saliency_grabcut",
-        metadata={"iterations": num_iterations, "rect": rect},
+        metadata={"iterations": num_iterations, "bbox": bbox},
     )
 
 
@@ -518,8 +530,8 @@ def segment_object(
                 threshold=threshold,
                 keep_largest_only=keep_largest_only,
             )
-            # If auto mode and neural network detected negligible foreground (< 4%), fallback to spatial GrabCut
-            if method == "auto" and result.foreground_ratio < 0.04:
+            # If auto mode and neural network detected partial foreground (< 10%), fallback to spatial GrabCut
+            if method == "auto" and result.foreground_ratio < 0.10:
                 return segment_saliency_grabcut(image, keep_largest_only=keep_largest_only)
             return result
         except Exception:
